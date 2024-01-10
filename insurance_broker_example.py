@@ -3,10 +3,13 @@ from dotenv import load_dotenv
 from crewai import Agent, Task, Crew, Process
 from langchain.tools import DuckDuckGoSearchRun
 from langchain.agents import load_tools
+from langchain.chat_models import ChatOpenAI
 
 load_dotenv()
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+MODEL_NAME = "gpt-4-1106-preview"
+TEMPERATURE = 0.4
 
 # Initialize the search tool
 search_tool = DuckDuckGoSearchRun()
@@ -17,27 +20,35 @@ human_tools = load_tools(["human"])
 # Define the CrewAI agents
 greetCustomer = Agent(
     role='Customer Welcome Specialist',
-    goal='Greet customers and explain the benefits and services of ZenCover',
+    goal='Greet customers, and explain the benefits and services of ZenCover',
     backstory="""GreetCustomer is the friendly and informative first point of contact for new clients at ZenCover.
     This agent is skilled in making clients feel welcomed and valued, while providing clear and concise information
-    about ZenCover's services. GreetCustomer sets the tone for a positive customer experience.
+    about ZenCover's swiss health insurance brokering services. GreetCustomer sets the tone for a positive customer experience.
     ONLY SPEAK in french with the human""",
     verbose=True,
-    allow_delegation=False
+    allow_delegation=False,
+    llm=ChatOpenAI(
+            temperature=TEMPERATURE,
+            model_name= MODEL_NAME,
+        ),
+    tools= human_tools
 )
 
 
 infoGather = Agent(
     role='Client Information Specialist',
     goal='Efficiently collect and organize client information for personalized insurance matching',
-    backstory="""InfoGather is the first point of contact for clients at ZenCover.
-    This agent specializes in gathering comprehensive client profiles. InfoGather's friendly and
+    backstory="""InfoGather specializes in gathering comprehensive client profiles. InfoGather's friendly and
     engaging approach ensures that clients feel understood and valued right from the start.
     You will engage in a conversation with a human untill you have all the information you need.
     You MUST return a comprehensive summary of the customer needs.
     ONLY SPEAK in french with the human""",
     verbose=True,
     allow_delegation=False,
+    llm=ChatOpenAI(
+            temperature=TEMPERATURE,
+            model_name= MODEL_NAME,
+        ),
     tools= human_tools
 )
 
@@ -51,6 +62,10 @@ matchMaster = Agent(
     ONLY SPEAK in french with the human""",
     verbose=True,
     allow_delegation=True,
+    llm=ChatOpenAI(
+            temperature=TEMPERATURE,
+            model_name= MODEL_NAME,
+        ),
     tools=[search_tool] + human_tools
 )
 
@@ -64,8 +79,31 @@ policyPro = Agent(
     ONLY SPEAK in french with the human""",
     verbose=True,
     allow_delegation=True,
+    llm=ChatOpenAI(
+            temperature=TEMPERATURE,
+            model_name= MODEL_NAME,
+        ),
     tools=[search_tool] + human_tools
 )
+
+farewellAdvisor = Agent(
+    role='Client Satisfaction and Farewell Specialist',
+    goal='Ensure client satisfaction and offer additional assistance before concluding the interaction',
+    backstory="""FarewellAdvisor is the final touchpoint in the client's journey with ZenCover.
+    This agent specializes in assessing client satisfaction and identifying any unresolved needs.
+    FarewellAdvisor's empathetic and attentive approach ensures that clients leave the interaction feeling heard,
+    valued, and satisfied with the service provided.
+    Loop back to InfoGather if the client has additional requirements.
+    ONLY SPEAK in French with the human""",
+    verbose=True,
+    allow_delegation=True,
+    llm=ChatOpenAI(
+            temperature=TEMPERATURE,
+            model_name= MODEL_NAME,
+        ),
+    tools= human_tools
+)
+
 #? Ces deux agents ne sembles pas être utilisés comme prévu dans le processus. Il faudrait plutôt les transformer en outils.
 # webScout = Agent(
 #     role='Insurance Product Web Researcher',
@@ -95,16 +133,18 @@ policyPro = Agent(
 # Tasks for the agents
 
 taskGreetCustomer = Task(
-    description="""Greet the new client warmly and provide a clear, engaging introduction to ZenCover.
+    description="""Greet the new client warmly and provide a short, clear and engaging introduction to ZenCover.
     Highlight the key services and benefits that ZenCover offers. Ensure the message is inviting and
     informative, making the client feel valued and interested in learning more.
-    Your final answer MUST be a welcoming message coupled with an introduction to ZenCover.""",
+    Use the human toos to ask the client what they are looking for.
+    Your final answer MUST be the client answer to pass to InfoGather.""",
     agent=greetCustomer
 )
 
 taskInfoGather = Task(
-    description="""Engage with new clients to collect comprehensive information regarding their insurance needs.
-    Use interactive and friendly methods to gather personal details, risk factors, preferences, and insurance history.
+    description="""Based on the client previous answer and using your "human tool",
+    engage a conversation with new clients to collect comprehensive information regarding their insurance needs.
+    Use the human tools to gather personal details (name, age, postal code), budget, risk factors, preferences, and insurance history.
     Ensure the information is accurate, complete, and well-organized for further analysis.
     Your final answer MUST be a complete and organized client profile.""",
     agent=infoGather
@@ -112,9 +152,11 @@ taskInfoGather = Task(
 
 taskMatchMaster = Task(
     description="""Analyze the client profiles provided by InfoGather.
-    Use advanced AI algorithms to match clients with suitable insurance policies.
+    Search for the most suitable insurance policies for the client.
     Consider various factors like coverage options, costs, and provider reputations.
-    Compile a list of personalized insurance recommendations for each client.
+    Compile a list of personalized insurance recommendations
+    Use the human tools to present your recommandations to the client and get a feedback
+    If the client is not satisfied, you can ask for more information from InfoGather.
     Your final answer MUST be a list of tailored insurance recommendations.""",
     agent=matchMaster
     )
@@ -126,6 +168,17 @@ taskPolicyPro = Task(
     Your final answer MUST be the completed application process with client confirmation.""",
     agent=policyPro
     )
+
+taskFarewellAdvisor = Task(
+    description="""Use the human tools to talk with the client and assess their satisfaction with the services provided.
+    Ask the client if their needs have been met, if they require any additional assistance,
+    and if they are happy with the service provided.
+    If the client expresses further needs or dissatisfaction,
+    facilitate a seamless handover back to InfoGather for additional information gathering.""",
+    agent=farewellAdvisor
+)
+
+
 
 # taskWebScout = Task(
 #     description="""Continuously scan the internet for the latest information on insurance products.
@@ -146,8 +199,8 @@ taskPolicyPro = Task(
 
 # Instantiate your crew with a sequential process
 crew = Crew(
-    agents=[infoGather, matchMaster, policyPro],
-    tasks=[taskInfoGather, taskMatchMaster, taskPolicyPro],
+    agents=[greetCustomer ,infoGather, matchMaster, policyPro, farewellAdvisor],
+    tasks=[taskGreetCustomer,taskInfoGather, taskMatchMaster, taskPolicyPro, taskFarewellAdvisor],
     verbose=2,
     process=Process.sequential
 )
